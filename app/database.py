@@ -21,14 +21,19 @@ if db_url.startswith("postgres://"):
 elif db_url.startswith("postgresql://"):
     db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-# ``sslmode`` is a libpq/psycopg parameter and does not belong in an
-# asyncpg DSN.  When present, keep encrypted connections by translating it to
-# asyncpg's ``connect_args={"ssl": True}`` while stripping it from the URL.
+# ``sslmode`` and ``channel_binding`` are libpq/psycopg parameters and do not
+# belong in an asyncpg DSN.  When present, keep encrypted connections by
+# translating them to asyncpg's ``connect_args={"ssl": True}`` and stripping them
+# from the URL before SQLAlchemy creates the engine.
 engine_kwargs: dict = {"echo": False}
 if "asyncpg" in db_url.lower():
     parsed = urlsplit(db_url)
     query_items = parse_qsl(parsed.query, keep_blank_values=True)
-    filtered_query = [(key, value) for key, value in query_items if key.lower() != "sslmode"]
+    filtered_query = [
+        (key, value)
+        for key, value in query_items
+        if key.lower() not in {"sslmode", "channel_binding"}
+    ]
     if len(filtered_query) != len(query_items):
         db_url = urlunsplit(parsed._replace(query=urlencode(filtered_query, doseq=True)))
         engine_kwargs["connect_args"] = {"ssl": True}
