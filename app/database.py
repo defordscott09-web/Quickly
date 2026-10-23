@@ -1,4 +1,6 @@
 """Database connection and session."""
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 
@@ -19,19 +21,30 @@ if db_url.startswith("postgres://"):
 elif db_url.startswith("postgresql://"):
     db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-# If the database URL refers to SQLite we need the StaticPool/"
+# ``sslmode`` is a libpq/psycopg parameter and does not belong in an
+# asyncpg DSN.  When present, keep encrypted connections by translating it to
+# asyncpg's ``connect_args={"ssl": True}`` while stripping it from the URL.
+engine_kwargs: dict = {"echo": False}
+if "asyncpg" in db_url.lower():
+    parsed = urlsplit(db_url)
+    query_items = parse_qsl(parsed.query, keep_blank_values=True)
+    filtered_query = [(key, value) for key, value in query_items if key.lower() != "sslmode"]
+    if len(filtered_query) != len(query_items):
+        db_url = urlunsplit(parsed._replace(query=urlencode(filtered_query, doseq=True)))
+        engine_kwargs["connect_args"] = {"ssl": True}
+
+# If the database URL refers to SQLite we need the StaticPool/
 # check_same_thread" combination so that an in-memory database survives
 # across multiple connections.  This is primarily for the test suite when
 # ``TEST_DATABASE_URL`` is set to a memory URL; production (Postgres) is
 # unaffected.
-engine_kwargs: dict = {"echo": False}
 if db_url.startswith("sqlite"):
     from sqlalchemy.pool import StaticPool
 
     # treat URL as URI (needed when using query params like cache=shared)
     engine_kwargs.update(
         {
-            "connect_args": {"check_same_thread": False, "uri": True},
+            "connect_args": {**engine_kwargs.get("connect_args", {}), "check_same_thread": False, "uri": True},
             "poolclass": StaticPool,
         }
     )
